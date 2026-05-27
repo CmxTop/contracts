@@ -81,6 +81,8 @@ trait IDataStore {
     fn get_address(env: Env, key: BytesN<32>) -> Option<Address>;
     fn add_bytes32_to_set(env: Env, caller: Address, set_key: BytesN<32>, value: BytesN<32>);
     fn remove_bytes32_from_set(env: Env, caller: Address, set_key: BytesN<32>, value: BytesN<32>);
+    fn contains_bytes32(env: Env, set_key: BytesN<32>, value: BytesN<32>) -> bool;
+    fn set_address(env: Env, caller: Address, key: BytesN<32>, value: Address) -> Address;
 }
 
 #[allow(dead_code)]
@@ -645,6 +647,26 @@ mod tests {
         long_tk:   Address,
         short_tk:  Address,
         index_tk:  Address,
+    use deposit_vault::{DepositVault, DepositVaultClient as DVClient};
+    use market_token::{MarketToken, MarketTokenClient as MtClient};
+    use deposit_handler::{DepositHandler, DepositHandlerClient, CreateDepositParams};
+    use gmx_keys::roles;
+    use gmx_types::TokenPrice;
+
+    struct World {
+        env:         Env,
+        admin:       Address,
+        keeper:      Address,
+        ds:          Address,
+        oracle:      Address,
+        dep_vault:   Address,
+        ord_vault:   Address,
+        dep_handler: Address,
+        ord_handler: Address,
+        market_tk:   Address,
+        long_tk:     Address,
+        short_tk:    Address,
+        index_tk:    Address,
     }
 
     fn setup() -> World {
@@ -656,6 +678,9 @@ mod tests {
         let user   = Address::generate(&env);
 
         // — Role store —
+        let admin  = Address::generate(&env);
+        let keeper = Address::generate(&env);
+
         let rs = env.register(RoleStore, ());
         RsClient::new(&env, &rs).initialize(&admin);
         let rs_c = RsClient::new(&env, &rs);
@@ -667,6 +692,9 @@ mod tests {
         DsClient::new(&env, &ds).initialize(&admin, &rs);
 
         // — Oracle —
+        let ds = env.register(DataStore, ());
+        DsClient::new(&env, &ds).initialize(&admin, &rs);
+
         let oracle_addr = env.register(Oracle, ());
         let passphrase = soroban_sdk::Bytes::from_slice(&env, b"Test SDF Network ; September 2015");
         OClient::new(&env, &oracle_addr).initialize(&admin, &rs, &ds, &passphrase);
@@ -693,6 +721,30 @@ mod tests {
         rs_c.grant_role(&admin, &handler, &roles::controller(&env));
 
         // — Underlying tokens (SEP-41 stellar assets support minting in tests) —
+        let dep_vault = env.register(DepositVault, ());
+        DVClient::new(&env, &dep_vault).initialize(&admin, &rs);
+
+        let ord_vault = env.register(OrderVault, ());
+        OVClient::new(&env, &ord_vault).initialize(&admin, &rs);
+
+        let market_tk = env.register(MarketToken, ());
+        MtClient::new(&env, &market_tk).initialize(
+            &admin, &rs, &7u32,
+            &soroban_sdk::String::from_str(&env, "GMX Market Token"),
+            &soroban_sdk::String::from_str(&env, "GM"),
+        );
+
+        let dep_handler = env.register(DepositHandler, ());
+        DepositHandlerClient::new(&env, &dep_handler)
+            .initialize(&admin, &rs, &ds, &oracle_addr, &dep_vault);
+
+        let ord_handler = env.register(OrderHandler, ());
+        OrderHandlerClient::new(&env, &ord_handler)
+            .initialize(&admin, &rs, &ds, &oracle_addr, &ord_vault);
+
+        rs_c.grant_role(&admin, &dep_handler, &roles::controller(&env));
+        rs_c.grant_role(&admin, &ord_handler, &roles::controller(&env));
+
         let long_tk  = env.register_stellar_asset_contract_v2(admin.clone()).address();
         let short_tk = env.register_stellar_asset_contract_v2(admin.clone()).address();
         let index_tk = Address::generate(&env);
@@ -707,6 +759,16 @@ mod tests {
     }
 
     /// Set oracle prices: long_tk = $2000, short_tk = $1, index_tk = $2000.
+        let ds_c = DsClient::new(&env, &ds);
+        ds_c.set_address(&dep_handler, &gmx_keys::market_index_token_key(&env, &market_tk), &index_tk);
+        ds_c.set_address(&dep_handler, &gmx_keys::market_long_token_key(&env, &market_tk),  &long_tk);
+        ds_c.set_address(&dep_handler, &gmx_keys::market_short_token_key(&env, &market_tk), &short_tk);
+
+        World { env, admin, keeper, ds, oracle: oracle_addr,
+                dep_vault, ord_vault, dep_handler, ord_handler,
+                market_tk, long_tk, short_tk, index_tk }
+    }
+
     fn set_prices(w: &World) {
         let fp = gmx_math::FLOAT_PRECISION;
         OClient::new(&w.env, &w.oracle).set_prices_simple(&w.keeper, &Vec::from_array(&w.env, [
@@ -878,5 +940,100 @@ mod tests {
             &gmx_keys::open_interest_key(&w.env, &w.market_tk, &w.long_tk, true)
         );
         assert!(long_oi > 0, "long open interest must increase after limit increase execution");
+    fn seed_pool(w: &World) {
+        let lp = Address::generate(&w.env);
+        StellarAssetClient::new(&w.env, &w.long_tk).mint(&lp,  &10_000_0000i128);
+        StellarAssetClient::new(&w.env, &w.short_tk).mint(&lp, &5_000_0000i128);
+        set_prices(w);
+        let k = DepositHandlerClient::new(&w.env, &w.dep_handler).create_deposit(&lp, &CreateDepositParams {
+            receiver: lp.clone(), market: w.market_tk.clone(),
+            initial_long_token: w.long_tk.clone(), initial_short_token: w.short_tk.clone(),
+            long_token_amount: 10_000_0000, short_token_amount: 5_000_0000,
+            min_market_tokens: 1, execution_fee: 0,
+        });
+        DepositHandlerClient::new(&w.env, &w.dep_handler).execute_deposit(&w.keeper, &k);
+    }
+
+    // ── Issue #32: order storage cleanup tests ────────────────────────────────
+
+    /// After cancel_order, the record must be gone from local storage AND from
+    /// both the global and per-account order lists in data_store.
+    #[test]
+    fn cancel_order_cleans_up_storage_and_lists() {
+        let w = setup();
+        let env = &w.env;
+        let user = Address::generate(env);
+
+        StellarAssetClient::new(env, &w.long_tk).mint(&user, &1_000_0000i128);
+        soroban_sdk::token::Client::new(env, &w.long_tk)
+            .transfer(&user, &w.ord_vault, &1_000_0000i128);
+
+        let hc = OrderHandlerClient::new(env, &w.ord_handler);
+        let ds_c = DsClient::new(env, &w.ds);
+
+        let key = hc.create_order(&user, &CreateOrderParams {
+            receiver: user.clone(), market: w.market_tk.clone(),
+            initial_collateral_token: w.long_tk.clone(),
+            swap_path: Vec::new(env),
+            size_delta_usd: 500_000_0000i128, collateral_delta_amount: 1_000_0000i128,
+            trigger_price: 0, acceptable_price: i128::MAX,
+            execution_fee: 0, min_output_amount: 0,
+            order_type: OrderType::MarketIncrease, is_long: true,
+        });
+
+        // must exist before cancel
+        assert!(hc.get_order(&key).is_some());
+        assert!(ds_c.contains_bytes32(&gmx_keys::order_list_key(env), &key));
+        assert!(ds_c.contains_bytes32(&gmx_keys::account_order_list_key(env, &user), &key));
+
+        hc.cancel_order(&user, &key);
+
+        // must be fully gone — no stale records
+        assert!(hc.get_order(&key).is_none(), "record must be removed after cancel");
+        assert!(!ds_c.contains_bytes32(&gmx_keys::order_list_key(env), &key),
+            "global order list must not contain key after cancel");
+        assert!(!ds_c.contains_bytes32(&gmx_keys::account_order_list_key(env, &user), &key),
+            "account order list must not contain key after cancel");
+    }
+
+    /// After execute_order (MarketIncrease), the record must be gone from local
+    /// storage AND from both the global and per-account order lists.
+    #[test]
+    fn execute_order_cleans_up_storage_and_lists() {
+        let w = setup();
+        let env = &w.env;
+        seed_pool(&w);
+        set_prices(&w);
+
+        let user = Address::generate(env);
+        StellarAssetClient::new(env, &w.long_tk).mint(&user, &1_000_0000i128);
+        soroban_sdk::token::Client::new(env, &w.long_tk)
+            .transfer(&user, &w.ord_vault, &1_000_0000i128);
+
+        let hc = OrderHandlerClient::new(env, &w.ord_handler);
+        let ds_c = DsClient::new(env, &w.ds);
+
+        let key = hc.create_order(&user, &CreateOrderParams {
+            receiver: user.clone(), market: w.market_tk.clone(),
+            initial_collateral_token: w.long_tk.clone(),
+            swap_path: Vec::new(env),
+            size_delta_usd: 500_000_0000i128, collateral_delta_amount: 1_000_0000i128,
+            trigger_price: 0, acceptable_price: i128::MAX,
+            execution_fee: 0, min_output_amount: 0,
+            order_type: OrderType::MarketIncrease, is_long: true,
+        });
+
+        assert!(hc.get_order(&key).is_some());
+        assert!(ds_c.contains_bytes32(&gmx_keys::order_list_key(env), &key));
+        assert!(ds_c.contains_bytes32(&gmx_keys::account_order_list_key(env, &user), &key));
+
+        hc.execute_order(&w.keeper, &key);
+
+        // must be fully gone — no stale records
+        assert!(hc.get_order(&key).is_none(), "record must be removed after execute");
+        assert!(!ds_c.contains_bytes32(&gmx_keys::order_list_key(env), &key),
+            "global order list must not contain key after execute");
+        assert!(!ds_c.contains_bytes32(&gmx_keys::account_order_list_key(env, &user), &key),
+            "account order list must not contain key after execute");
     }
 }

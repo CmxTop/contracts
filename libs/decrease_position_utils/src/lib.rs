@@ -117,10 +117,10 @@ pub fn decrease_position(env: &Env, p: &DecreasePositionParams) -> DecreasePosit
     let execution_price = get_execution_price(env, index_price_mid, size_delta_usd, impact_usd, p.is_long, false);
     if p.acceptable_price != 0 {
         if p.is_long  && execution_price < p.acceptable_price {
-            soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(1));
+            soroban_sdk::panic_with_error!(env, soroban_sdk::Error::from_contract_error(1));
         }
         if !p.is_long && execution_price > p.acceptable_price {
-            soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(2));
+            soroban_sdk::panic_with_error!(env, soroban_sdk::Error::from_contract_error(2));
         }
     }
 
@@ -268,12 +268,17 @@ mod tests {
         index_tk:  Address,
     }
 
+    #[soroban_sdk::contract]
+    pub struct DummyContract;
+    #[soroban_sdk::contractimpl]
+    impl DummyContract {}
+
     fn setup() -> World {
         let env = Env::default();
         env.mock_all_auths();
 
         let admin  = Address::generate(&env);
-        let caller = Address::generate(&env);
+        let caller = env.register(DummyContract, ());
         let user   = Address::generate(&env);
 
         let rs = env.register(RoleStore, ());
@@ -303,7 +308,7 @@ mod tests {
         ds_c.set_address(&admin, &gmx_keys::market_short_token_key(&env, &market_tk), &short_tk);
 
         World { env, admin, caller, user, ds, market_tk, long_tk, short_tk, index_tk }
-    }
+     }
 
     fn configure_market(w: &World, fee_bps: i128) {
         let ds_c = DsClient::new(&w.env, &w.ds);
@@ -336,7 +341,21 @@ mod tests {
             is_long:                     true,
         };
         let pos_key = gmx_keys::position_key(&w.env, &w.user, &w.market_tk, &w.long_tk, true);
-        w.env.storage().persistent().set(&PositionKey::Position(pos_key), &position);
+        w.env.as_contract(&w.caller, || {
+            w.env.storage().persistent().set(&PositionKey::Position(pos_key), &position);
+        });
+
+        // Seed Open Interest and Collateral Sum in DataStore to prevent underflows on decrease
+        let ds_c = DsClient::new(&w.env, &w.ds);
+        let oi_key = gmx_keys::open_interest_key(&w.env, &w.market_tk, &w.long_tk, true);
+        ds_c.set_u128(&w.admin, &oi_key, &(size_usd as u128));
+
+        let oi_tokens_key = gmx_keys::open_interest_in_tokens_key(&w.env, &w.market_tk, &w.long_tk, true);
+        ds_c.set_u128(&w.admin, &oi_tokens_key, &(size_in_tokens as u128));
+
+        let col_sum_key = gmx_keys::collateral_sum_key(&w.env, &w.market_tk, &w.long_tk, true);
+        ds_c.set_u128(&w.admin, &col_sum_key, &(collateral as u128));
+
         // Mint enough tokens into the market pool so withdraw_from_pool can transfer
         StellarAssetClient::new(&w.env, &w.long_tk).mint(&w.market_tk, &(collateral + 5 * ONE_TOKEN));
         position
@@ -369,21 +388,23 @@ mod tests {
         let price  = PriceProps { min: index_price, max: index_price };
         let size_delta = size_usd / 2; // close 50%
 
-        let result = decrease_position(&w.env, &DecreasePositionParams {
-            data_store:        &w.ds,
-            caller:            &w.caller,
-            account:           &w.user,
-            receiver:          &w.user,
-            market:            &market,
-            collateral_token:  &w.long_tk,
-            size_delta_usd:    size_delta,
-            acceptable_price:  0,
-            is_long:           true,
-            index_token_price: &price,
-            collateral_price:  index_price,
-            current_time:      2_000,
-            swap_path:         Vec::new(&w.env),
-            oracle:            &w.admin, // unused; no swap path
+        let result = w.env.as_contract(&w.caller, || {
+            decrease_position(&w.env, &DecreasePositionParams {
+                data_store:        &w.ds,
+                caller:            &w.caller,
+                account:           &w.user,
+                receiver:          &w.user,
+                market:            &market,
+                collateral_token:  &w.long_tk,
+                size_delta_usd:    size_delta,
+                acceptable_price:  0,
+                is_long:           true,
+                index_token_price: &price,
+                collateral_price:  index_price,
+                current_time:      2_000,
+                swap_path:         Vec::new(&w.env),
+                oracle:            &w.admin, // unused; no swap path
+            })
         });
 
         // Expected position fee: size_delta × fee_factor / FLOAT_PRECISION / collateral_price × TOKEN_PRECISION
@@ -423,21 +444,23 @@ mod tests {
         let market = make_market(&w);
         let price  = PriceProps { min: index_price, max: index_price };
 
-        let result = decrease_position(&w.env, &DecreasePositionParams {
-            data_store:        &w.ds,
-            caller:            &w.caller,
-            account:           &w.user,
-            receiver:          &w.user,
-            market:            &market,
-            collateral_token:  &w.long_tk,
-            size_delta_usd:    size_usd, // full close
-            acceptable_price:  0,
-            is_long:           true,
-            index_token_price: &price,
-            collateral_price:  index_price,
-            current_time:      2_000,
-            swap_path:         Vec::new(&w.env),
-            oracle:            &w.admin,
+        let result = w.env.as_contract(&w.caller, || {
+            decrease_position(&w.env, &DecreasePositionParams {
+                data_store:        &w.ds,
+                caller:            &w.caller,
+                account:           &w.user,
+                receiver:          &w.user,
+                market:            &market,
+                collateral_token:  &w.long_tk,
+                size_delta_usd:    size_usd, // full close
+                acceptable_price:  0,
+                is_long:           true,
+                index_token_price: &price,
+                collateral_price:  index_price,
+                current_time:      2_000,
+                swap_path:         Vec::new(&w.env),
+                oracle:            &w.admin,
+            })
         });
 
         assert!(result.output_amount >= 0, "output must be non-negative on full close");
@@ -460,21 +483,23 @@ mod tests {
         let market = make_market(&w);
         let price  = PriceProps { min: close_price, max: close_price };
 
-        let result = decrease_position(&w.env, &DecreasePositionParams {
-            data_store:        &w.ds,
-            caller:            &w.caller,
-            account:           &w.user,
-            receiver:          &w.user,
-            market:            &market,
-            collateral_token:  &w.long_tk,
-            size_delta_usd:    size_usd,
-            acceptable_price:  0,
-            is_long:           true,
-            index_token_price: &price,
-            collateral_price:  close_price,
-            current_time:      2_000,
-            swap_path:         Vec::new(&w.env),
-            oracle:            &w.admin,
+        let result = w.env.as_contract(&w.caller, || {
+            decrease_position(&w.env, &DecreasePositionParams {
+                data_store:        &w.ds,
+                caller:            &w.caller,
+                account:           &w.user,
+                receiver:          &w.user,
+                market:            &market,
+                collateral_token:  &w.long_tk,
+                size_delta_usd:    size_usd,
+                acceptable_price:  0,
+                is_long:           true,
+                index_token_price: &price,
+                collateral_price:  close_price,
+                current_time:      2_000,
+                swap_path:         Vec::new(&w.env),
+                oracle:            &w.admin,
+            })
         });
 
         // Output must never go negative
@@ -511,21 +536,23 @@ mod tests {
         let price  = PriceProps { min: index_price, max: index_price };
         let size_delta = size_usd / 2;
 
-        decrease_position(&w.env, &DecreasePositionParams {
-            data_store:        &w.ds,
-            caller:            &w.caller,
-            account:           &w.user,
-            receiver:          &w.user,
-            market:            &market,
-            collateral_token:  &w.long_tk,
-            size_delta_usd:    size_delta,
-            acceptable_price:  0,
-            is_long:           true,
-            index_token_price: &price,
-            collateral_price:  index_price,
-            current_time:      2_000,
-            swap_path:         Vec::new(&w.env),
-            oracle:            &w.admin,
+        w.env.as_contract(&w.caller, || {
+            decrease_position(&w.env, &DecreasePositionParams {
+                data_store:        &w.ds,
+                caller:            &w.caller,
+                account:           &w.user,
+                receiver:          &w.user,
+                market:            &market,
+                collateral_token:  &w.long_tk,
+                size_delta_usd:    size_delta,
+                acceptable_price:  0,
+                is_long:           true,
+                index_token_price: &price,
+                collateral_price:  index_price,
+                current_time:      2_000,
+                swap_path:         Vec::new(&w.env),
+                oracle:            &w.admin,
+            })
         });
 
         // The claimable funding amount for user should be positive

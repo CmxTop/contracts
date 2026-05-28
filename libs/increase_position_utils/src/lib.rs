@@ -116,10 +116,10 @@ pub fn increase_position(env: &Env, p: &IncreasePositionParams) -> PositionProps
     let execution_price = get_execution_price(env, index_price, p.size_delta_usd, impact_usd, p.is_long, true);
     if p.acceptable_price != 0 {
         if p.is_long && execution_price > p.acceptable_price {
-            soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(1));
+            soroban_sdk::panic_with_error!(env, soroban_sdk::Error::from_contract_error(1));
         }
         if !p.is_long && execution_price < p.acceptable_price {
-            soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(2));
+            soroban_sdk::panic_with_error!(env, soroban_sdk::Error::from_contract_error(2));
         }
     }
 
@@ -140,7 +140,7 @@ pub fn increase_position(env: &Env, p: &IncreasePositionParams) -> PositionProps
     // 8. Update collateral: add deposited, subtract fees
     position.collateral_amount += p.collateral_amount - fees.total_cost_amount;
     if position.collateral_amount < 0 {
-        soroban_sdk::panic_with_error!(env, soroban_sdk::contracterror::Error::from_u32(3));
+        soroban_sdk::panic_with_error!(env, soroban_sdk::Error::from_contract_error(3));
     }
 
     // 9. Update position size and funding/borrowing trackers
@@ -229,11 +229,16 @@ mod tests {
         index_tk:  Address,
     }
 
+    #[soroban_sdk::contract]
+    pub struct DummyContract;
+    #[soroban_sdk::contractimpl]
+    impl DummyContract {}
+
     fn setup() -> World {
         let env = Env::default();
         env.mock_all_auths();
 
-        let admin  = Address::generate(&env);
+        let admin  = env.register(DummyContract, ());
         let keeper = Address::generate(&env);
         let user   = Address::generate(&env);
 
@@ -343,20 +348,22 @@ mod tests {
         let collateral = ONE_TOKEN * 10; // 10 tokens
         let size_delta  = 1_000 * fp;   // $1000 position
 
-        let position = increase_position(&w.env, &IncreasePositionParams {
-            data_store:        &w.ds,
-            caller:            &w.admin,
-            account:           &w.user,
-            receiver:          &w.user,
-            market:            &market,
-            collateral_token:  &w.long_tk,
-            size_delta_usd:    size_delta,
-            collateral_amount: collateral,
-            acceptable_price:  0,
-            is_long:           true,
-            index_token_price: &index_price_props,
-            collateral_price:  index_price,
-            current_time:      1_000,
+        let position = w.env.as_contract(&w.admin, || {
+            increase_position(&w.env, &IncreasePositionParams {
+                data_store:        &w.ds,
+                caller:            &w.admin,
+                account:           &w.user,
+                receiver:          &w.user,
+                market:            &market,
+                collateral_token:  &w.long_tk,
+                size_delta_usd:    size_delta,
+                collateral_amount: collateral,
+                acceptable_price:  0,
+                is_long:           true,
+                index_token_price: &index_price_props,
+                collateral_price:  index_price,
+                current_time:      1_000,
+            })
         });
 
         // Borrowing factor snapshot must match current cumulative value
@@ -389,20 +396,22 @@ mod tests {
         };
         let index_price_props = gmx_types::PriceProps { min: index_price, max: index_price };
 
-        let position = increase_position(&w.env, &IncreasePositionParams {
-            data_store:        &w.ds,
-            caller:            &w.admin,
-            account:           &w.user,
-            receiver:          &w.user,
-            market:            &market,
-            collateral_token:  &w.long_tk,
-            size_delta_usd:    500 * fp,
-            collateral_amount: ONE_TOKEN * 5,
-            acceptable_price:  0,
-            is_long:           true,
-            index_token_price: &index_price_props,
-            collateral_price:  index_price,
-            current_time:      1_000,
+        let position = w.env.as_contract(&w.admin, || {
+            increase_position(&w.env, &IncreasePositionParams {
+                data_store:        &w.ds,
+                caller:            &w.admin,
+                account:           &w.user,
+                receiver:          &w.user,
+                market:            &market,
+                collateral_token:  &w.long_tk,
+                size_delta_usd:    500 * fp,
+                collateral_amount: ONE_TOKEN * 5,
+                acceptable_price:  0,
+                is_long:           true,
+                index_token_price: &index_price_props,
+                collateral_price:  index_price,
+                current_time:      1_000,
+            })
         });
 
         // Funding snapshot must match current funding-per-size
@@ -442,20 +451,22 @@ mod tests {
         let pool_key = gmx_keys::pool_amount_key(&w.env, &w.market_tk, &w.long_tk);
         let pool_before = DsClient::new(&w.env, &w.ds).get_u128(&pool_key) as i128;
 
-        let position = increase_position(&w.env, &IncreasePositionParams {
-            data_store:        &w.ds,
-            caller:            &w.admin,
-            account:           &w.user,
-            receiver:          &w.user,
-            market:            &market,
-            collateral_token:  &w.long_tk,
-            size_delta_usd:    size_delta,
-            collateral_amount: collateral,
-            acceptable_price:  0,
-            is_long:           true,
-            index_token_price: &index_price_props,
-            collateral_price:  index_price,
-            current_time:      1_000,
+        let position = w.env.as_contract(&w.admin, || {
+            increase_position(&w.env, &IncreasePositionParams {
+                data_store:        &w.ds,
+                caller:            &w.admin,
+                account:           &w.user,
+                receiver:          &w.user,
+                market:            &market,
+                collateral_token:  &w.long_tk,
+                size_delta_usd:    size_delta,
+                collateral_amount: collateral,
+                acceptable_price:  0,
+                is_long:           true,
+                index_token_price: &index_price_props,
+                collateral_price:  index_price,
+                current_time:      1_000,
+            })
         });
 
         // Expected position fee: size_delta * fee_factor / FLOAT_PRECISION / collateral_price * TOKEN_PRECISION
@@ -511,20 +522,22 @@ mod tests {
         let oi_key = gmx_keys::open_interest_key(&w.env, &w.market_tk, &w.long_tk, true);
         let oi_before = DsClient::new(&w.env, &w.ds).get_u128(&oi_key) as i128;
 
-        increase_position(&w.env, &IncreasePositionParams {
-            data_store:        &w.ds,
-            caller:            &w.admin,
-            account:           &w.user,
-            receiver:          &w.user,
-            market:            &market,
-            collateral_token:  &w.long_tk,
-            size_delta_usd:    size_delta,
-            collateral_amount: ONE_TOKEN * 10,
-            acceptable_price:  0,
-            is_long:           true,
-            index_token_price: &index_price_props,
-            collateral_price:  index_price,
-            current_time:      1_000,
+        w.env.as_contract(&w.admin, || {
+            increase_position(&w.env, &IncreasePositionParams {
+                data_store:        &w.ds,
+                caller:            &w.admin,
+                account:           &w.user,
+                receiver:          &w.user,
+                market:            &market,
+                collateral_token:  &w.long_tk,
+                size_delta_usd:    size_delta,
+                collateral_amount: ONE_TOKEN * 10,
+                acceptable_price:  0,
+                is_long:           true,
+                index_token_price: &index_price_props,
+                collateral_price:  index_price,
+                current_time:      1_000,
+            })
         });
 
         let oi_after = DsClient::new(&w.env, &w.ds).get_u128(&oi_key) as i128;
@@ -581,7 +594,9 @@ mod tests {
         let price_props = gmx_types::PriceProps { min: index_price, max: index_price };
 
         // No MAX_OPEN_INTEREST key set → cap is 0 → treated as uncapped
-        let position = increase_position(&w.env, &open_params(&w, &market, &price_props, 100_000 * fp, index_price));
+        let position = w.env.as_contract(&w.admin, || {
+            increase_position(&w.env, &open_params(&w, &market, &price_props, 100_000 * fp, index_price))
+        });
         assert!(position.size_in_usd > 0, "uncapped market must accept large position");
     }
 
@@ -609,7 +624,9 @@ mod tests {
         let price_props = gmx_types::PriceProps { min: index_price, max: index_price };
 
         // Open a position exactly at the cap
-        let position = increase_position(&w.env, &open_params(&w, &market, &price_props, cap as i128, index_price));
+        let position = w.env.as_contract(&w.admin, || {
+            increase_position(&w.env, &open_params(&w, &market, &price_props, cap as i128, index_price))
+        });
         assert_eq!(position.size_in_usd, cap as i128, "position at cap must be accepted");
 
         // Verify OI in data_store equals exactly the cap
@@ -643,7 +660,9 @@ mod tests {
         let price_props = gmx_types::PriceProps { min: index_price, max: index_price };
 
         // Attempt to open a position that exceeds the cap — must revert
-        increase_position(&w.env, &open_params(&w, &market, &price_props, cap as i128 + fp, index_price));
+        w.env.as_contract(&w.admin, || {
+            increase_position(&w.env, &open_params(&w, &market, &price_props, cap as i128 + fp, index_price));
+        });
     }
 
     /// Cap is per-side: a long OI cap does not affect short positions.
@@ -687,7 +706,9 @@ mod tests {
             collateral_price:  index_price,
             current_time:      1_000,
         };
-        let short_pos = increase_position(&w.env, &short_params);
+        let short_pos = w.env.as_contract(&w.admin, || {
+            increase_position(&w.env, &short_params)
+        });
         assert!(short_pos.size_in_usd > 0, "short position must succeed when only long cap is set");
     }
 }

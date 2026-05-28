@@ -260,6 +260,7 @@ mod tests {
 
     fn setup() -> World {
         let env = Env::default();
+        env.cost_estimate().budget().reset_unlimited();
         env.mock_all_auths();
 
         let admin      = Address::generate(&env);
@@ -566,8 +567,9 @@ mod tests {
         set_prices(&w, 2_000 * fp);
         open_long_position(&w, ONE_TOKEN, 20_000 * fp);
 
-        // Use a random hash — the mock host does not validate wasm bytes.
-        let new_hash = BytesN::random(&w.env);
+        // Upload a dummy WASM to register it in the simulated ledger.
+        let dummy_wasm = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+        let new_hash = w.env.deployer().upload_contract_wasm(soroban_sdk::Bytes::from_slice(&w.env, &dummy_wasm));
         LiquidationHandlerClient::new(&w.env, &w.liq_handler).upgrade(&new_hash);
 
         // Storage must survive the upgrade: admin is still readable.
@@ -615,9 +617,11 @@ mod tests {
         set_prices(&w, 2_000 * fp);
         open_long_position(&w, ONE_TOKEN, 20_000 * fp);
 
-        // Perform upgrade.
+        // Perform upgrade with a registered dummy WASM.
+        let dummy_wasm = [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+        let new_hash = w.env.deployer().upload_contract_wasm(soroban_sdk::Bytes::from_slice(&w.env, &dummy_wasm));
         LiquidationHandlerClient::new(&w.env, &w.liq_handler)
-            .upgrade(&BytesN::random(&w.env));
+            .upgrade(&new_hash);
 
         // Crash price so position is liquidatable.
         set_prices(&w, 100 * fp);

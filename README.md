@@ -1007,24 +1007,31 @@ contracts/
 
 ## Upgrade Policy
 
-Every core contract exposes an `upgrade(env, new_wasm_hash)` function that authenticates the stored admin before calling `env.deployer().update_current_contract_wasm(new_wasm_hash)`. Upgrades must be deliberate, role-gated decisions.
+Every core contract designed to be upgradeable exposes an `upgrade(env, new_wasm_hash)` function that authenticates the stored admin before calling `env.deployer().update_current_contract_wasm(new_wasm_hash)`.
 
-| Contract | Upgradeable | Role required | Notes |
+> [!NOTE]
+> **Audit Finding (Code-vs-Doc Disconnect):**
+> While the operator workflows are structured to support broad upgrades, only **three execution handlers** actually implement the `upgrade` entrypoint in Rust. The remaining contracts (including core databases and vaults) are **functionally immutable**, which significantly reduces the key-compromise attack surface for the protocol.
+
+| Contract | Upgradeable (in Rust Code) | Upgrade Authority | Notes |
 |---|---|---|---|
-| `data_store` | ✅ Yes | admin | Stores all protocol state. Upgrade only with a verified migration plan. |
-| `role_store` | ✅ Yes | admin | Controls all access gates. Upgrade with extreme caution. |
-| `market_factory` | ✅ Yes | admin | Owns market deployment logic. Review new market token wasm hash. |
-| `market_token` | ❌ Immutable | — | LP token. Once deployed per market it must never change. |
-| `oracle` | ✅ Yes | admin | Pricing source. Validate new price feed logic before upgrade. |
-| `deposit_handler` | ✅ Yes | admin | — |
-| `withdrawal_handler` | ✅ Yes | admin | — |
-| `order_handler` | ✅ Yes | admin | — |
-| `liquidation_handler` | ✅ Yes | admin | — |
-| `adl_handler` | ✅ Yes | admin | — |
-| `fee_handler` | ✅ Yes | admin | — |
-| `referral_storage` | ✅ Yes | admin | — |
-| `reader` | ✅ Yes | admin | Read-only; upgrade risk is low. |
-| `exchange_router` | ✅ Yes | admin | User entry point. Test multicall paths after every upgrade. |
+| `data_store` | ❌ Immutable | — | Stores all protocol state. Immutability protects against raw data tampering. |
+| `role_store` | ❌ Immutable | — | Access control registry. Immutability secures access credentials. |
+| `market_factory` | ❌ Immutable | — | Deploys LP tokens. Cannot be upgraded. |
+| `market_token` | ❌ Immutable | — | Standard SEP-41 LP token. Always immutable. |
+| `oracle` | ❌ Immutable | — | Price feed consumer. Fully immutable. |
+| `deposit_vault` | ❌ Immutable | — | Token custodian. Fully immutable. |
+| `withdrawal_vault`| ❌ Immutable | — | LP token custodian. Fully immutable. |
+| `order_vault` | ❌ Immutable | — | Collateral custodian. Fully immutable. |
+| `deposit_handler` | ✅ Yes | local `admin` address | Custody handling and LP mint execution. |
+| `withdrawal_handler`| ❌ Immutable | — | Fully immutable. |
+| `order_handler` | ✅ Yes | local `admin` address | Trading engine (orders, positions, swaps). |
+| `liquidation_handler`| ✅ Yes | local `admin` address | Triggers forced position closing. |
+| `adl_handler` | ❌ Immutable | — | Fully immutable. |
+| `fee_handler` | ❌ Immutable | — | Fully immutable. |
+| `referral_storage` | ❌ Immutable | — | Fully immutable. |
+| `reader` | ❌ Immutable | — | Stateless view aggregation. |
+| `exchange_router` | ❌ Immutable | — | Single user entry point. |
 
 **Upgrade workflow:**
 
@@ -1039,7 +1046,7 @@ make upgrade-all DRY_RUN=1 NETWORK=testnet SOURCE=deployer
 make upgrade-all NETWORK=testnet SOURCE=deployer
 ```
 
-`market_token` is listed in `IMMUTABLE_CONTRACTS` in `mx/upgrade.mk` and is skipped by `make upgrade-all`.
+`market_token` and other non-upgradeable contracts are skipped or rejected by `make upgrade-contract` and `make upgrade-all` based on lack of entrypoint.
 
 ---
 
@@ -1047,27 +1054,27 @@ make upgrade-all NETWORK=testnet SOURCE=deployer
 
 > **Resolves issue #4 — Create a contract responsibility matrix.**
 
-This matrix maps every contract under `contracts/*` to its state ownership, initialization parameters, access controls, collaboration graph, events, and upgrade characteristics.
+This matrix maps every contract under `contracts/*` to its state ownership, initialization parameters, access controls, collaboration graph, events, and actual upgrade characteristics.
 
 | Contract | State Keys Owned | Init Arguments | Access Control / Roles Checked | Collaborating Contracts | Emitted Events | Upgrade Policy |
 |---|---|---|---|---|---|---|
-| `role_store` | `Admin`, `Initialized`, `(account, role) -> bool` | `admin: Address` | `Admin` auth for modification. | None | `RoleGranted`, `RoleRevoked` | ✅ Upgradeable (Admin) |
-| `data_store` | `Admin`, `RoleStore`, arbitrary KV pairs | `admin: Address`, `role_store: Address` | `CONTROLLER` role for state mutation. | `role_store` | None | ✅ Upgradeable (Admin) |
-| `oracle` | `Admin`, `RoleStore`, `DataStore`, `Passphrase`, temporary prices | `admin`, `role_store`, `data_store`, `passphrase: Bytes` | `price_keeper` / `order_keeper` role to set prices. | `role_store`, `data_store` | `prices_set` | ✅ Upgradeable (Admin) |
-| `market_factory` | `Admin`, `RoleStore`, `DataStore`, `MarketTokenWasmHash` | `admin`, `role_store`, `data_store` | `MARKET_KEEPER` role to create markets. | Deploys `market_token`; writes to `data_store`. | `wasm_set`, `mkt_new` | ✅ Upgradeable (Admin) |
+| `role_store` | `Admin`, `Initialized`, `(account, role) -> bool` | `admin: Address` | `Admin` auth for modification. | None | `RoleGranted`, `RoleRevoked` | ❌ Immutable (Rust) |
+| `data_store` | `Admin`, `RoleStore`, arbitrary KV pairs | `admin: Address`, `role_store: Address` | `CONTROLLER` role for state mutation. | `role_store` | None | ❌ Immutable (Rust) |
+| `oracle` | `Admin`, `RoleStore`, `DataStore`, `Passphrase`, temporary prices | `admin`, `role_store`, `data_store`, `passphrase: Bytes` | `price_keeper` / `order_keeper` role to set prices. | `role_store`, `data_store` | `prices_set` | ❌ Immutable (Rust) |
+| `market_factory` | `Admin`, `RoleStore`, `DataStore`, `MarketTokenWasmHash` | `admin`, `role_store`, `data_store` | `MARKET_KEEPER` role to create markets. | Deploys `market_token`; writes to `data_store`. | `wasm_set`, `mkt_new` | ❌ Immutable (Rust) |
 | `market_token` | Token balances, allowances, metadata | `admin`, `role_store`, `decimal`, `name`, `symbol` | `CONTROLLER` role to mint/burn. | `role_store` | SEP-41 Transfer, Approval, Mint, Burn | ❌ Immutable |
 | `deposit_vault` | `RoleStore`, `TokenBalance(Address)` | `admin`, `role_store` | `CONTROLLER` role for `transfer_out`. | SEP-41 tokens, `role_store` | None | ❌ Immutable |
 | `withdrawal_vault` | `RoleStore`, `TokenBalance(Address)` | `admin`, `role_store` | `CONTROLLER` role for `transfer_out`. | `market_token`, `role_store` | None | ❌ Immutable |
 | `order_vault` | `RoleStore`, `TokenBalance(Address)` | `admin`, `role_store` | `CONTROLLER` role for `transfer_out`. | SEP-41 tokens, `role_store` | None | ❌ Immutable |
-| `deposit_handler` | `Admin`, `RoleStore`, `DataStore`, `Oracle`, `DepositVault`, `LocalKey::Deposit(nonce)` | `admin`, `role_store`, `data_store`, `oracle`, `deposit_vault` | `ORDER_KEEPER` role to execute/cancel. | `deposit_vault`, `market_token`, `data_store`, `oracle`, `role_store` | `dep_req`, `dep_exec`, `dep_fail` | ✅ Upgradeable (Admin) |
-| `withdrawal_handler` | `Admin`, `RoleStore`, `DataStore`, `Oracle`, `WithdrawalVault`, `LocalKey::Withdrawal(nonce)` | `admin`, `role_store`, `data_store`, `oracle`, `withdrawal_vault` | `ORDER_KEEPER` role to execute/cancel. | `withdrawal_vault`, `market_token`, `data_store`, `oracle`, `role_store` | `wd_req`, `wd_exec`, `wd_fail` | ✅ Upgradeable (Admin) |
-| `order_handler` | `Admin`, `RoleStore`, `DataStore`, `Oracle`, `OrderVault`, `OrderStorageKey::Order(nonce)`, `PositionStorageKey::Position(key)` | `admin`, `role_store`, `data_store`, `oracle`, `order_vault` | `ORDER_KEEPER` for orders. `LIQUIDATION_KEEPER`/`ADL_KEEPER`/`CONTROLLER` for positions. | `order_vault`, `data_store`, `oracle`, `role_store`, libs | `ord_req`, `ord_exec`, `ord_fail`, `pos_update` | ✅ Upgradeable (Admin) |
-| `liquidation_handler` | `Admin`, `RoleStore`, `DataStore`, `Oracle`, `OrderHandler` | `admin`, `role_store`, `data_store`, `oracle`, `order_handler` | `LIQUIDATION_KEEPER` role to liquidate. | `order_handler`, `data_store`, `oracle`, `role_store` | `liq_req` | ✅ Upgradeable (Admin) |
-| `adl_handler` | `Admin`, `RoleStore`, `DataStore`, `Oracle`, `OrderHandler` | `admin`, `role_store`, `data_store`, `oracle`, `order_handler` | `ADL_KEEPER` role to execute ADL. | `order_handler`, `data_store`, `oracle`, `role_store` | `adl_req` | ✅ Upgradeable (Admin) |
-| `fee_handler` | `Admin`, `RoleStore`, `DataStore` | `admin`, `role_store`, `data_store` | `FEE_KEEPER` role to claim fees. | `data_store`, `role_store`, SEP-41 tokens | `fees_claimed` | ✅ Upgradeable (Admin) |
-| `referral_storage` | `Admin`, `ReferralKey::CodeOwner`, `ReferralKey::TraderCode`, `ReferralKey::ReferrerTier`, `ReferralKey::TierConfig` | `admin: Address` | `Admin` auth for configuring tiers. | None | `CodeRegistered`, `TraderCodeSet` | ✅ Upgradeable (Admin) |
-| `reader` | None (Stateless) | None | None (Public view-only) | `data_store`, `oracle` | None | ✅ Upgradeable (Admin) |
-| `exchange_router` | `Admin`, `RoleStore`, `DataStore`, `DepositHandler`, `WithdrawalHandler`, `OrderHandler` | `admin`, `role_store`, `data_store`, `deposit_handler`, `withdrawal_handler`, `order_handler` | None (Public user entry point) | `deposit_handler`, `withdrawal_handler`, `order_handler`, SEP-41 tokens | None | ✅ Upgradeable (Admin) |
+| `deposit_handler` | `Admin`, `RoleStore`, `DataStore`, `Oracle`, `DepositVault`, `LocalKey::Deposit(nonce)` | `admin`, `role_store`, `data_store`, `oracle`, `deposit_vault` | `ORDER_KEEPER` role to execute/cancel. | `deposit_vault`, `market_token`, `data_store`, `oracle`, `role_store` | `dep_req`, `dep_exec`, `dep_fail` | ✅ Upgradeable (Local Admin) |
+| `withdrawal_handler` | `Admin`, `RoleStore`, `DataStore`, `Oracle`, `WithdrawalVault`, `LocalKey::Withdrawal(nonce)` | `admin`, `role_store`, `data_store`, `oracle`, `withdrawal_vault` | `ORDER_KEEPER` role to execute/cancel. | `withdrawal_vault`, `market_token`, `data_store`, `oracle`, `role_store` | `wd_req`, `wd_exec`, `wd_fail` | ❌ Immutable (Rust) |
+| `order_handler` | `Admin`, `RoleStore`, `DataStore`, `Oracle`, `OrderVault`, `OrderStorageKey::Order(nonce)`, `PositionStorageKey::Position(key)` | `admin`, `role_store`, `data_store`, `oracle`, `order_vault` | `ORDER_KEEPER` for orders. `LIQUIDATION_KEEPER`/`ADL_KEEPER`/`CONTROLLER` for positions. | `order_vault`, `data_store`, `oracle`, `role_store`, libs | `ord_req`, `ord_exec`, `ord_fail`, `pos_update` | ✅ Upgradeable (Local Admin) |
+| `liquidation_handler` | `Admin`, `RoleStore`, `DataStore`, `Oracle`, `OrderHandler` | `admin`, `role_store`, `data_store`, `oracle`, `order_handler` | `LIQUIDATION_KEEPER` role to liquidate. | `order_handler`, `data_store`, `oracle`, `role_store` | `liq_req` | ✅ Upgradeable (Local Admin) |
+| `adl_handler` | `Admin`, `RoleStore`, `DataStore`, `Oracle`, `OrderHandler` | `admin`, `role_store`, `data_store`, `oracle`, `order_handler` | `ADL_KEEPER` role to execute ADL. | `order_handler`, `data_store`, `oracle`, `role_store` | `adl_req` | ❌ Immutable (Rust) |
+| `fee_handler` | `Admin`, `RoleStore`, `DataStore` | `admin`, `role_store`, `data_store` | `FEE_KEEPER` role to claim fees. | `data_store`, `role_store`, SEP-41 tokens | `fees_claimed` | ❌ Immutable (Rust) |
+| `referral_storage` | `Admin`, `ReferralKey::CodeOwner`, `ReferralKey::TraderCode`, `ReferralKey::ReferrerTier`, `ReferralKey::TierConfig` | `admin: Address` | `Admin` auth for configuring tiers. | None | `CodeRegistered`, `TraderCodeSet` | ❌ Immutable (Rust) |
+| `reader` | None (Stateless) | None | None (Public view-only) | `data_store`, `oracle` | None | ❌ Immutable (Rust) |
+| `exchange_router` | `Admin`, `RoleStore`, `DataStore`, `DepositHandler`, `WithdrawalHandler`, `OrderHandler` | `admin`, `role_store`, `data_store`, `deposit_handler`, `withdrawal_handler`, `order_handler` | None (Public user entry point) | `deposit_handler`, `withdrawal_handler`, `order_handler`, SEP-41 tokens | None | ❌ Immutable (Rust) |
 
 ---
 

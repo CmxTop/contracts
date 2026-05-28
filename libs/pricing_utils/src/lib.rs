@@ -493,9 +493,9 @@ mod tests {
         let market = make_market(&mt, &it, &lt, &st);
 
         let price = FLOAT_PRECISION;
-        let neg_factor = FLOAT_PRECISION / 100;
-        let pos_factor = FLOAT_PRECISION / 200;
-        let exponent   = FLOAT_PRECISION;
+        let neg_factor = FLOAT_PRECISION / 1_000_000;
+        let pos_factor = FLOAT_PRECISION / 2_000_000;
+        let exponent   = 2 * FLOAT_PRECISION;
 
         // Small imbalance: long=1100, short=1000
         seed_swap_market(&env, &ds, &admin, &market, 1_100 * TOKEN_PRECISION, 1_000 * TOKEN_PRECISION, neg_factor, pos_factor, exponent);

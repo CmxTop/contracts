@@ -18,6 +18,7 @@ use gmx_math::{TOKEN_PRECISION, mul_div_wide};
 use gmx_keys::{
     market_index_token_key, market_long_token_key, market_short_token_key,
     funding_amount_per_size_key, saved_funding_factor_per_second_key,
+    position_key,
 };
 use gmx_market_utils::{get_pool_value, get_open_interest_for_side};
 use gmx_position_utils::{get_position_pnl_usd, get_position_fees, is_liquidatable};

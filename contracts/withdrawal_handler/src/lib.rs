@@ -726,6 +726,96 @@ mod tests {
         assert_eq!(MtClient::new(env, &w.market_tk).balance(&user), lp_balance - half_lp);
     }
 
+    // ── Issue #28: global withdrawal list lifecycle ────────────────────────────
+
+    /// Create three withdrawals, cancel one, execute another, leave the third
+    /// pending.  The global list and per-account list must reflect exactly the
+    /// pending withdrawal at each stage.
+    #[test]
+    fn withdrawal_list_reflects_full_lifecycle() {
+        let w = setup();
+        let env = &w.env;
+
+        // Three separate users each get LP tokens from a deposit.
+        let user_a = Address::generate(env);
+        let user_b = Address::generate(env);
+        let user_c = Address::generate(env);
+
+        for u in [&user_a, &user_b, &user_c] {
+            StellarAssetClient::new(env, &w.long_tk).mint(u, &1_000_0000i128);
+        }
+        set_prices(&w);
+
+        let lp_a = do_deposit(&w, &user_a, 1_000_0000, 0);
+        set_prices(&w);
+        let lp_b = do_deposit(&w, &user_b, 1_000_0000, 0);
+        set_prices(&w);
+        let lp_c = do_deposit(&w, &user_c, 1_000_0000, 0);
+
+        assert!(lp_a > 0);
+        assert!(lp_b > 0);
+        assert!(lp_c > 0);
+
+        let wh = WithdrawalHandlerClient::new(env, &w.wth_handler);
+        let ds = DsClient::new(env, &w.ds);
+
+        // ── Create three withdrawals ──────────────────────────────────────────
+        set_prices(&w);
+        let params_for = |user: &Address, lp: i128| CreateWithdrawalParams {
+            receiver:               user.clone(),
+            market:                 w.market_tk.clone(),
+            market_token_amount:    lp,
+            min_long_token_amount:  0,
+            min_short_token_amount: 0,
+            execution_fee:          0,
+        };
+
+        let key_a = wh.create_withdrawal(&user_a, &params_for(&user_a, lp_a));
+        let key_b = wh.create_withdrawal(&user_b, &params_for(&user_b, lp_b));
+        let key_c = wh.create_withdrawal(&user_c, &params_for(&user_c, lp_c));
+
+        // All three must appear in the global list.
+        assert_eq!(ds.get_bytes32_set_count(&gmx_keys::withdrawal_list_key(env)), 3,
+            "global list must have 3 entries after three creates");
+        for key in [&key_a, &key_b, &key_c] {
+            assert!(ds.contains_bytes32(&gmx_keys::withdrawal_list_key(env), key),
+                "global list must contain each key after create");
+        }
+
+        // Each user's account list must have exactly their key.
+        for (user, key) in [(&user_a, &key_a), (&user_b, &key_b), (&user_c, &key_c)] {
+            assert_eq!(ds.get_bytes32_set_count(&gmx_keys::account_withdrawal_list_key(env, user)), 1);
+            assert!(ds.contains_bytes32(&gmx_keys::account_withdrawal_list_key(env, user), key));
+        }
+
+        // ── Cancel user_a's withdrawal ────────────────────────────────────────
+        wh.cancel_withdrawal(&user_a, &key_a);
+
+        assert_eq!(ds.get_bytes32_set_count(&gmx_keys::withdrawal_list_key(env)), 2,
+            "global list must have 2 entries after one cancel");
+        assert!(!ds.contains_bytes32(&gmx_keys::withdrawal_list_key(env), &key_a),
+            "cancelled key must be absent from global list");
+        assert_eq!(ds.get_bytes32_set_count(&gmx_keys::account_withdrawal_list_key(env, &user_a)), 0,
+            "cancelled user account list must be empty");
+
+        // ── Execute user_b's withdrawal ───────────────────────────────────────
+        set_prices(&w);
+        wh.execute_withdrawal(&w.keeper, &key_b);
+
+        assert_eq!(ds.get_bytes32_set_count(&gmx_keys::withdrawal_list_key(env)), 1,
+            "global list must have 1 entry after cancel + execute");
+        assert!(!ds.contains_bytes32(&gmx_keys::withdrawal_list_key(env), &key_b),
+            "executed key must be absent from global list");
+        assert_eq!(ds.get_bytes32_set_count(&gmx_keys::account_withdrawal_list_key(env, &user_b)), 0,
+            "executed user account list must be empty");
+
+        // ── user_c's withdrawal is still pending ─────────────────────────────
+        assert!(ds.contains_bytes32(&gmx_keys::withdrawal_list_key(env), &key_c),
+            "pending key must remain in global list");
+        assert!(wh.get_withdrawal(&key_c).is_some(),
+            "pending withdrawal record must still exist");
+    }
+
     #[test]
     fn cancel_withdrawal_refunds_lp() {
         let w = setup();

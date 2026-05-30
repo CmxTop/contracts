@@ -368,7 +368,7 @@ mod tests {
         let index_tk = Address::generate(&env);
         let long_tk  = Address::generate(&env);
         let short_tk = Address::generate(&env);
-        let mt = soroban_sdk::String::from_str(&env, "swap");
+        let mt = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
         client.create_market(&impostor, &index_tk, &long_tk, &short_tk, &mt);
     }
 }

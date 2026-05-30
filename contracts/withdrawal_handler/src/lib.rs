@@ -849,7 +849,10 @@ mod tests {
     fn execute_withdrawal_by_non_keeper_panics() {
         let w = setup();
         let user = Address::generate(&w.env);
-        let lp_balance = provide_liquidity(&w, &user, 5_000_0000, 2_000_0000);
+        StellarAssetClient::new(&w.env, &w.long_tk).mint(&user, &5_000_0000i128);
+        StellarAssetClient::new(&w.env, &w.short_tk).mint(&user, &2_000_0000i128);
+        set_prices(&w);
+        let lp_balance = do_deposit(&w, &user, 5_000_0000, 2_000_0000);
 
         // Create a withdrawal to get a key.
         let wth_key = WithdrawalHandlerClient::new(&w.env, &w.wth_handler)

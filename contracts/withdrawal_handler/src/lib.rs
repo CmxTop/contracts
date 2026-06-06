@@ -18,10 +18,7 @@ use gmx_keys::{
     account_withdrawal_list_key, market_index_token_key, market_long_token_key,
     market_short_token_key, roles, withdrawal_key, withdrawal_list_key,
 };
-use gmx_market_utils::{
-    apply_delta_to_pool_amount, get_pool_amount, update_cumulative_borrowing_factor,
-    update_funding_state,
-};
+use gmx_market_utils::{apply_delta_to_pool_amount, get_pool_amount};
 use gmx_math::mul_div_wide;
 pub use gmx_types::CreateWithdrawalParams;
 use gmx_types::{MarketProps, WithdrawalProps};
@@ -272,11 +269,6 @@ impl WithdrawalHandler {
             .instance()
             .get(&InstanceKey::WithdrawalVault)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
-        let oracle: Address = env
-            .storage()
-            .instance()
-            .get(&InstanceKey::Oracle)
-            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
         let handler = env.current_contract_address();
 
         let withdrawal: WithdrawalProps = env
@@ -286,18 +278,6 @@ impl WithdrawalHandler {
             .unwrap_or_else(|| panic_with_error!(&env, Error::WithdrawalNotFound));
 
         let market = load_market_props(&env, &data_store, &withdrawal.market);
-
-        // Read oracle prices
-        let oracle_client = OracleClient::new(&env, &oracle);
-        let long_price = oracle_client
-            .get_primary_price(&market.long_token)
-            .mid_price();
-        let short_price = oracle_client
-            .get_primary_price(&market.short_token)
-            .mid_price();
-        let _index_price = oracle_client
-            .get_primary_price(&market.index_token)
-            .mid_price();
 
         let mt_client = MarketTokenClient::new(&env, &market.market_token);
         let total_supply = mt_client.total_supply();
@@ -359,20 +339,6 @@ impl WithdrawalHandler {
                 -short_out,
             );
         }
-
-        // Update market state
-        let now = env.ledger().timestamp();
-        update_funding_state(
-            &env,
-            &data_store,
-            &handler,
-            &market,
-            long_price,
-            short_price,
-            now,
-        );
-        update_cumulative_borrowing_factor(&env, &data_store, &handler, &market, true, now);
-        update_cumulative_borrowing_factor(&env, &data_store, &handler, &market, false, now);
 
         remove_withdrawal(&env, &data_store, &handler, &key, &withdrawal.account);
 

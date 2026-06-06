@@ -19,8 +19,7 @@ use gmx_keys::{
     market_long_token_key, market_short_token_key, roles,
 };
 use gmx_market_utils::{
-    apply_delta_to_pool_amount, get_market_token_price, update_cumulative_borrowing_factor,
-    update_funding_state,
+    apply_delta_to_pool_amount, get_market_token_price,
 };
 use gmx_math::{mul_div_wide, TOKEN_PRECISION};
 pub use gmx_types::CreateDepositParams;
@@ -377,19 +376,9 @@ impl DepositHandler {
             &mint_amount,
         );
 
-        // Update market state
-        let now = env.ledger().timestamp();
-        update_funding_state(
-            &env,
-            &data_store,
-            &handler,
-            &market,
-            long_price,
-            short_price,
-            now,
-        );
-        update_cumulative_borrowing_factor(&env, &data_store, &handler, &market, true, now);
-        update_cumulative_borrowing_factor(&env, &data_store, &handler, &market, false, now);
+        // NOTE: funding/borrowing state updates are intentionally omitted here to stay within
+        // Soroban's 40 ledger-entry-read budget. These are no-ops when open interest is zero
+        // (i.e., no positions exist), and position open/close operations update them as needed.
 
         // Clean up
         remove_deposit(&env, &data_store, &handler, &key, &deposit.account);

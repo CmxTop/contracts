@@ -192,6 +192,22 @@ impl ExchangeRouter {
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
+    /// Update the withdrawal_handler address. Only the stored admin may call this.
+    pub fn update_withdrawal_handler(env: Env, caller: Address, new_handler: Address) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&InstanceKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotInitialized));
+        if caller != admin {
+            panic_with_error!(&env, Error::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&InstanceKey::WithdrawalHandler, &new_handler);
+    }
+
     pub fn set_paused(env: Env, paused: bool) {
         let admin: Address = env
             .storage()

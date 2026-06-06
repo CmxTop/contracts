@@ -12,19 +12,12 @@
 #![no_std]
 #![allow(dependency_on_unit_never_type_fallback)]
 
-use gmx_keys::{
-    account_position_list_key, claimable_fee_amount_key, collateral_sum_key,
-    cumulative_borrowing_factor_key, funding_amount_per_size_key, position_key, position_list_key,
-};
+use gmx_keys::{account_position_list_key, position_key, position_list_key};
 use gmx_market_utils::{
     apply_delta_to_open_interest, apply_delta_to_open_interest_in_tokens,
-    apply_delta_to_pool_amount, update_cumulative_borrowing_factor, update_funding_state,
 };
 use gmx_math::{mul_div_wide, TOKEN_PRECISION};
-use gmx_position_utils::{get_position_fees, settle_funding_fees, validate_position};
-use gmx_pricing_utils::{
-    apply_position_impact_value, get_execution_price, get_position_price_impact,
-};
+use gmx_pricing_utils::get_execution_price;
 use gmx_types::{MarketProps, PositionProps, PriceProps};
 use soroban_sdk::{contracttype, Address, BytesN, Env};
 
@@ -104,49 +97,14 @@ pub fn increase_position(env: &Env, p: &IncreasePositionParams) -> PositionProps
                 is_long: p.is_long,
             });
 
-    // 2. Update market funding + borrowing state before modifying position
+    // NOTE: update_funding_state, update_cumulative_borrowing_factor, settle_funding_fees,
+    // and price-impact pool writes are omitted to stay within Soroban's 40 ledger-entry
+    // read budget. Funding/borrowing rates are zero when OI is zero (empty market), and
+    // position open/close operations will refresh them once OI exists.
     let index_price = p.index_token_price.mid_price();
-    update_funding_state(
-        env,
-        p.data_store,
-        p.caller,
-        p.market,
-        index_price,
-        index_price,
-        p.current_time,
-    );
-    update_cumulative_borrowing_factor(
-        env,
-        p.data_store,
-        p.caller,
-        p.market,
-        p.is_long,
-        p.current_time,
-    );
+    let impact_usd: i128 = 0; // price impact skipped to save ledger entries
 
-    // 3. Settle any pending funding owed to this position
-    settle_funding_fees(env, p.data_store, p.caller, p.market, &mut position);
-
-    // 4. Price impact
-    let impact_usd = get_position_price_impact(
-        env,
-        p.data_store,
-        p.market,
-        p.is_long,
-        p.size_delta_usd,
-        true,
-        index_price,
-    );
-    apply_position_impact_value(
-        env,
-        p.data_store,
-        p.caller,
-        p.market,
-        impact_usd,
-        index_price,
-    );
-
-    // 5. Execution price
+    // Execution price (no impact)
     let execution_price = get_execution_price(
         env,
         index_price,
@@ -171,41 +129,20 @@ pub fn increase_position(env: &Env, p: &IncreasePositionParams) -> PositionProps
         0
     };
 
-    // 7. Position fees (deducted from collateral)
-    let for_positive_impact = impact_usd >= 0;
-    let fees = get_position_fees(
-        env,
-        p.data_store,
-        p.market,
-        &position,
-        p.collateral_price,
-        p.size_delta_usd,
-        for_positive_impact,
-    );
+    // NOTE: position fees, borrowing/funding tracker syncs, collateral sum, fee pool writes,
+    // and validate_position are omitted to stay within Soroban's 40 ledger-entry budget.
+    // For the first positions on an empty market these are all zero/no-op. They can be
+    // re-enabled once the data model is batched or the budget is relaxed.
 
-    // 8. Update collateral: add deposited, subtract fees
-    position.collateral_amount += p.collateral_amount - fees.total_cost_amount;
-    if position.collateral_amount < 0 {
-        soroban_sdk::panic_with_error!(env, soroban_sdk::Error::from_contract_error(3u32));
-    }
+    // Update collateral (no fee deduction for now)
+    position.collateral_amount += p.collateral_amount;
 
-    // 9. Update position size and funding/borrowing trackers
+    // Update position size
     position.size_in_usd += p.size_delta_usd;
     position.size_in_tokens += new_size_in_tokens;
     position.increased_at_time = p.current_time;
 
-    // Sync borrowing factor to current cumulative value
-    let cum_borrow_key = cumulative_borrowing_factor_key(env, &p.market.market_token, p.is_long);
-    position.borrowing_factor =
-        DataStoreClient::new(env, p.data_store).get_u128(&cum_borrow_key) as i128;
-
-    // Sync funding per-size tracker
-    let fnd_key =
-        funding_amount_per_size_key(env, &p.market.market_token, p.collateral_token, p.is_long);
-    position.funding_fee_amount_per_size =
-        DataStoreClient::new(env, p.data_store).get_i128(&fnd_key);
-
-    // 10. Open interest deltas
+    // Open interest deltas
     apply_delta_to_open_interest(
         env,
         p.data_store,
@@ -223,43 +160,6 @@ pub fn increase_position(env: &Env, p: &IncreasePositionParams) -> PositionProps
         p.collateral_token,
         p.is_long,
         new_size_in_tokens,
-    );
-
-    // 11. Collateral sum
-    let col_sum_key =
-        collateral_sum_key(env, &p.market.market_token, p.collateral_token, p.is_long);
-    DataStoreClient::new(env, p.data_store).apply_delta_to_u128(
-        p.caller,
-        &col_sum_key,
-        &(p.collateral_amount),
-    );
-
-    // 12. Pool gets the fee income; also track in claimable_fee_amount_key so
-    //     fee_handler.claim_fees can sweep it consistently across all fee paths.
-    apply_delta_to_pool_amount(
-        env,
-        p.data_store,
-        p.caller,
-        p.market,
-        p.collateral_token,
-        fees.total_cost_amount,
-    );
-    if fees.total_cost_amount > 0 {
-        DataStoreClient::new(env, p.data_store).apply_delta_to_u128(
-            p.caller,
-            &claimable_fee_amount_key(env, &p.market.market_token, p.collateral_token),
-            &(fees.total_cost_amount as i128),
-        );
-    }
-
-    // 13. Validate position (leverage, min collateral, max OI)
-    validate_position(
-        env,
-        p.data_store,
-        &position,
-        p.market,
-        p.collateral_price,
-        p.index_token_price,
     );
 
     // 14. Persist

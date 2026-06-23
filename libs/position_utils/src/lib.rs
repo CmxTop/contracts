@@ -162,6 +162,8 @@ pub fn settle_funding_fees(
         // Negative delta → position is owed funding from the other side
         let claimable_per_size = tracker - latest; // positive if position is owed
         if claimable_per_size > 0 {
+            // Round DOWN (floor): credit the position the floor amount so the pool
+            // never pays out more than it mathematically owes.
             let claimable_amount = mul_div_wide(
                 env,
                 claimable_per_size,

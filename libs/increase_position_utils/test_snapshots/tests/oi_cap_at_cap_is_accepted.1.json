@@ -398,7 +398,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
-              "function_name": "set_u128",
+              "function_name": "set_u128_instance",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
@@ -423,7 +423,7 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
-              "function_name": "set_u128",
+              "function_name": "set_u128_instance",
               "args": [
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
@@ -1942,33 +1942,6 @@
                     "symbol": "U128"
                   },
                   {
-                    "bytes": "41de5b46ada17ce723ab115ddcfdfbff42720c8abdf7741a20a591c39e8de008"
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "u128": "10000000000000000000000000"
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 4095
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "U128"
-                  },
-                  {
                     "bytes": "4909cb31aecf00b30033e212748e76cfa0b2614237ea44b70b8304290832dbb7"
                   }
                 ]
@@ -2125,33 +2098,6 @@
             "contract_data": {
               "ext": "v0",
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "U128"
-                  },
-                  {
-                    "bytes": "e52c40569ebf5df032afc134d019fc808e6531532e33ea0a1dbf787571ae8d63"
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "u128": "1000000000000000000000000000000"
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 4095
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
               "key": "ledger_key_contract_instance",
               "durability": "persistent",
               "val": {
@@ -2170,6 +2116,36 @@
                       },
                       "val": {
                         "bool": true
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "InstanceU128"
+                          },
+                          {
+                            "bytes": "41de5b46ada17ce723ab115ddcfdfbff42720c8abdf7741a20a591c39e8de008"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u128": "10000000000000000000000000"
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "InstanceU128"
+                          },
+                          {
+                            "bytes": "e52c40569ebf5df032afc134d019fc808e6531532e33ea0a1dbf787571ae8d63"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u128": "1000000000000000000000000000000"
                       }
                     },
                     {

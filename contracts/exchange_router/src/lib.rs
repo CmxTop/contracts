@@ -351,12 +351,14 @@ impl ExchangeRouter {
     /// Transfer `amount` of `token` from caller to `receiver` (funds a vault).
     pub fn send_tokens(env: Env, caller: Address, token: Address, receiver: Address, amount: i128) {
         caller.require_auth();
+        Self::require_not_paused(&env);
         token::Client::new(&env, &token).transfer(&caller, &receiver, &amount);
     }
 
     /// Forward create_deposit to the deposit_handler.
     pub fn create_deposit(env: Env, caller: Address, params: CreateDepositParams) -> BytesN<32> {
         caller.require_auth();
+        Self::require_not_paused(&env);
         let deposit_handler: Address = env
             .storage()
             .instance()
@@ -383,6 +385,7 @@ impl ExchangeRouter {
         params: CreateWithdrawalParams,
     ) -> BytesN<32> {
         caller.require_auth();
+        Self::require_not_paused(&env);
         let withdrawal_handler: Address = env
             .storage()
             .instance()
@@ -422,6 +425,7 @@ impl ExchangeRouter {
     /// Decrease / stop-loss / liquidation orders do not require a prior token send.
     pub fn create_order(env: Env, caller: Address, params: CreateOrderParams) -> BytesN<32> {
         caller.require_auth();
+        Self::require_not_paused(&env);
         let order_handler: Address = env
             .storage()
             .instance()
@@ -433,6 +437,7 @@ impl ExchangeRouter {
     /// Forward update_order to the order_handler.
     pub fn update_order(env: Env, caller: Address, params: UpdateOrderParams) {
         caller.require_auth();
+        Self::require_not_paused(&env);
         let order_handler: Address = env
             .storage()
             .instance()

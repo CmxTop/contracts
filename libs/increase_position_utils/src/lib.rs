@@ -370,13 +370,13 @@ mod tests {
             &(FLOAT_PRECISION as u128),
         );
 
-        // Funding factor
-        ds_c.set_u128(
+        // Funding factor — stored in instance storage (infrequently-written config)
+        ds_c.set_u128_instance(
             &w.admin,
             &gmx_keys::funding_factor_key(&w.env, &w.market_tk),
             &(FLOAT_PRECISION as u128 / 100_000),
         );
-        ds_c.set_u128(
+        ds_c.set_u128_instance(
             &w.admin,
             &gmx_keys::funding_exponent_factor_key(&w.env, &w.market_tk),
             &(FLOAT_PRECISION as u128),

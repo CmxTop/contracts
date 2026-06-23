@@ -40,6 +40,8 @@ enum DataKey {
     B32(BytesN<32>),
     AddrSet(BytesN<32>),
     B32Set(BytesN<32>),
+    InstanceU128(BytesN<32>),
+    InstanceI128(BytesN<32>),
 }
 
 // ─── Cross-contract role check interface ─────────────────────────────────────
@@ -104,6 +106,38 @@ impl DataStore {
             results.push_back(val);
         }
         results
+    }
+
+    pub fn get_u128_instance(env: Env, key: BytesN<32>) -> u128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::InstanceU128(key))
+            .unwrap_or(0)
+    }
+
+    pub fn set_u128_instance(env: Env, caller: Address, key: BytesN<32>, value: u128) -> u128 {
+        caller.require_auth();
+        require_controller(&env, &caller);
+        env.storage()
+            .instance()
+            .set(&DataKey::InstanceU128(key), &value);
+        value
+    }
+
+    pub fn get_i128_instance(env: Env, key: BytesN<32>) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::InstanceI128(key))
+            .unwrap_or(0)
+    }
+
+    pub fn set_i128_instance(env: Env, caller: Address, key: BytesN<32>, value: i128) -> i128 {
+        caller.require_auth();
+        require_controller(&env, &caller);
+        env.storage()
+            .instance()
+            .set(&DataKey::InstanceI128(key), &value);
+        value
     }
 
     pub fn set_u128(env: Env, caller: Address, key: BytesN<32>, value: u128) -> u128 {

@@ -36,6 +36,10 @@ trait IDataStore {
     fn set_i128(env: Env, caller: Address, key: BytesN<32>, value: i128) -> i128;
     fn apply_delta_to_u128(env: Env, caller: Address, key: BytesN<32>, delta: i128) -> u128;
     fn apply_delta_to_i128(env: Env, caller: Address, key: BytesN<32>, delta: i128) -> i128;
+    fn get_u128_instance(env: Env, key: BytesN<32>) -> u128;
+    fn set_u128_instance(env: Env, caller: Address, key: BytesN<32>, value: u128) -> u128;
+    fn get_i128_instance(env: Env, key: BytesN<32>) -> i128;
+    fn set_i128_instance(env: Env, caller: Address, key: BytesN<32>, value: i128) -> i128;
 }
 
 // ─── Pool amounts ─────────────────────────────────────────────────────────────
@@ -363,10 +367,14 @@ fn compute_next_funding_factor(
         return 0;
     }
 
+    // Funding config parameters are read from instance storage — they are
+    // set once during market initialization and read on every funding tick.
+    // Instance storage has lower rent cost and avoids TTL management overhead
+    // for these infrequently-written values.
     let exponent_key = funding_exponent_factor_key(env, &market.market_token);
     let funding_factor_key_val = funding_factor_key(env, &market.market_token);
-    let exponent = ds_client.get_u128(&exponent_key) as i128;
-    let funding_factor = ds_client.get_u128(&funding_factor_key_val) as i128;
+    let exponent = ds_client.get_u128_instance(&exponent_key) as i128;
+    let funding_factor = ds_client.get_u128_instance(&funding_factor_key_val) as i128;
 
     let diff_oi = (long_oi - short_oi).abs();
     // ratio = |diffOI| / totalOI (FLOAT_PRECISION)
@@ -387,10 +395,10 @@ fn compute_next_funding_factor(
     let min_key = min_funding_factor_per_second_key(env, &market.market_token);
     let max_key = max_funding_factor_per_second_key(env, &market.market_token);
 
-    let increase_factor = ds_client.get_u128(&inc_key) as i128;
-    let decrease_factor = ds_client.get_u128(&dec_key) as i128;
-    let min_factor = ds_client.get_i128(&min_key);
-    let max_factor = ds_client.get_i128(&max_key);
+    let increase_factor = ds_client.get_u128_instance(&inc_key) as i128;
+    let decrease_factor = ds_client.get_u128_instance(&dec_key) as i128;
+    let min_factor = ds_client.get_i128_instance(&min_key);
+    let max_factor = ds_client.get_i128_instance(&max_key);
 
     // Ramp toward target
     let ramp_delta = if signed_target > current_factor {
